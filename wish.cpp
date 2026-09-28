@@ -5,6 +5,8 @@
 #include <string>
 #include <cstring>
 #include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
 
 std::vector<std::string> search_paths = {"/bin"};
 
@@ -57,6 +59,42 @@ bool execute_builtin(const std::vector<std::string> &args) {
     return false;
 }
 
+void run_external(const std::vector<std::string> &args) {
+    std::string exec_path = "";
+    for (const auto &p : search_paths) {
+        std::string full = p + "/" + args[0];
+        if (access(full.c_str(), X_OK) == 0) {
+            exec_path = full;
+            break;
+        }
+    }
+
+    if (exec_path.empty()) {
+        print_error();
+        return;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        print_error();
+        return;
+    }
+
+    if (pid == 0) {
+        std::vector<char*> c_args;
+        for (const auto &arg : args) {
+            c_args.push_back(const_cast<char*>(arg.c_str()));
+        }
+        c_args.push_back(nullptr);
+
+        execv(exec_path.c_str(), c_args.data());
+        print_error();
+        exit(1);
+    } else {
+        waitpid(pid, nullptr, 0);
+    }
+}
+
 int main(int argc, char *argv[]) {
     std::istream *input_stream = &std::cin;
     std::ifstream file_stream;
@@ -88,7 +126,9 @@ int main(int argc, char *argv[]) {
 
         std::vector<std::string> args = tokenize(line);
         if (!args.empty()) {
-            execute_builtin(args);
+            if (!execute_builtin(args)) {
+                run_external(args);
+            }
         }
     }
 
