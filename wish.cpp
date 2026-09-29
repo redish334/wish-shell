@@ -9,19 +9,26 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 
-std::vector<std::string> search_paths = {"/bin"};
+std::vector<std::string> search_paths = {"/bin", "/usr/bin"};
 
 void print_error() {
     char error_message[30] = "An error has occurred\n";
     if (write(STDERR_FILENO, error_message, strlen(error_message)) < 0) {
     }
 }
+
 std::vector<std::string> tokenize(const std::string &str) {
     std::vector<std::string> tokens;
     std::stringstream ss(str);
     std::string token;
     while (ss >> token) {
-        tokens.push_back(token);
+        // Очищаємо кожен токен від невидимих символів повернення каретки
+        while (!token.empty() && (token.back() == '\r' || token.back() == '\n')) {
+            token.pop_back();
+        }
+        if (!token.empty()) {
+            tokens.push_back(token);
+        }
     }
     return tokens;
 }
@@ -68,7 +75,6 @@ pid_t launch_command(std::string cmd_str) {
         std::string left = cmd_str.substr(0, redir_pos);
         std::string right = cmd_str.substr(redir_pos + 1);
 
-        // Перевірка на множинний знак '>'
         if (right.find('>') != std::string::npos) {
             print_error();
             return -1;
@@ -95,7 +101,13 @@ pid_t launch_command(std::string cmd_str) {
 
     std::string exec_path = "";
     for (const auto &p : search_paths) {
-        std::string full = p + "/" + args[0];
+        std::string full;
+        if (!p.empty() && p.back() == '/') {
+            full = p + args[0];
+        } else {
+            full = p + "/" + args[0];
+        }
+
         if (access(full.c_str(), X_OK) == 0) {
             exec_path = full;
             break;
@@ -168,7 +180,14 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        // Розбиття на команди, розділені символом '&'
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ')) {
+            line.pop_back();
+        }
+
+        if (line.empty()) {
+            continue;
+        }
+
         std::vector<std::string> parallel_cmds;
         std::stringstream ss(line);
         std::string segment;
