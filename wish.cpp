@@ -13,9 +13,9 @@ std::vector<std::string> search_paths = {"/bin"};
 
 void print_error() {
     char error_message[30] = "An error has occurred\n";
-    write(STDERR_FILENO, error_message, strlen(error_message));
+    if (write(STDERR_FILENO, error_message, strlen(error_message)) < 0) {
+    }
 }
-
 std::vector<std::string> tokenize(const std::string &str) {
     std::vector<std::string> tokens;
     std::stringstream ss(str);
