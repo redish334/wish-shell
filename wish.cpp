@@ -5,6 +5,7 @@
 #include <string>
 #include <cstring>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <sys/types.h>
 
@@ -59,7 +60,39 @@ bool execute_builtin(const std::vector<std::string> &args) {
     return false;
 }
 
-void run_external(const std::vector<std::string> &args) {
+pid_t launch_command(std::string cmd_str) {
+    std::string output_file = "";
+    size_t redir_pos = cmd_str.find('>');
+
+    if (redir_pos != std::string::npos) {
+        std::string left = cmd_str.substr(0, redir_pos);
+        std::string right = cmd_str.substr(redir_pos + 1);
+
+        // Перевірка на множинний знак '>'
+        if (right.find('>') != std::string::npos) {
+            print_error();
+            return -1;
+        }
+
+        std::vector<std::string> out_tokens = tokenize(right);
+        if (out_tokens.size() != 1) {
+            print_error();
+            return -1;
+        }
+        output_file = out_tokens[0];
+        cmd_str = left;
+    }
+
+    std::vector<std::string> args = tokenize(cmd_str);
+    if (args.empty()) {
+        if (redir_pos != std::string::npos) print_error();
+        return -1;
+    }
+
+    if (execute_builtin(args)) {
+        return -1;
+    }
+
     std::string exec_path = "";
     for (const auto &p : search_paths) {
         std::string full = p + "/" + args[0];
@@ -71,16 +104,27 @@ void run_external(const std::vector<std::string> &args) {
 
     if (exec_path.empty()) {
         print_error();
-        return;
+        return -1;
     }
 
     pid_t pid = fork();
     if (pid < 0) {
         print_error();
-        return;
+        return -1;
     }
 
     if (pid == 0) {
+        if (!output_file.empty()) {
+            int fd = open(output_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            if (fd < 0) {
+                print_error();
+                exit(1);
+            }
+            dup2(fd, STDOUT_FILENO);
+            dup2(fd, STDERR_FILENO);
+            close(fd);
+        }
+
         std::vector<char*> c_args;
         for (const auto &arg : args) {
             c_args.push_back(const_cast<char*>(arg.c_str()));
@@ -90,9 +134,9 @@ void run_external(const std::vector<std::string> &args) {
         execv(exec_path.c_str(), c_args.data());
         print_error();
         exit(1);
-    } else {
-        waitpid(pid, nullptr, 0);
     }
+
+    return pid;
 }
 
 int main(int argc, char *argv[]) {
@@ -124,11 +168,24 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        std::vector<std::string> args = tokenize(line);
-        if (!args.empty()) {
-            if (!execute_builtin(args)) {
-                run_external(args);
+        // Розбиття на команди, розділені символом '&'
+        std::vector<std::string> parallel_cmds;
+        std::stringstream ss(line);
+        std::string segment;
+        while (std::getline(ss, segment, '&')) {
+            parallel_cmds.push_back(segment);
+        }
+
+        std::vector<pid_t> pids;
+        for (const auto &cmd : parallel_cmds) {
+            pid_t pid = launch_command(cmd);
+            if (pid > 0) {
+                pids.push_back(pid);
             }
+        }
+
+        for (pid_t pid : pids) {
+            waitpid(pid, nullptr, 0);
         }
     }
 
